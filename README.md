@@ -1,293 +1,222 @@
-Below is an updated **README.md** file that includes the `resources` and `environments` folders in the project structure:
-
-
 # py_builder
 
-py_builder is a Python-based infrastructure orchestration tool designed to provision and de-provision AWS resources using YAML task definitions, Jinja2 templating, and a modular service architecture. It supports building, unbuilding (destroying), and checking the status of AWS infrastructure deployments via FastAPI endpoints. Detailed step statuses are logged in a database using SQLAlchemy.
-
-## Project Structure
-
-```
-
-py_builder/
-├── models.py              # Database models for Application and Step records.
-├── services/
-│   ├── __init__.py
-│   ├── base_service.py    # Common helper methods (YAML loading, templating, subprocess calls, etc.)
-│   ├── build_service.py   # Build orchestration (provisioning AWS infra).
-│   ├── unbuild_service.py # Unbuild orchestration (destroying AWS infra).
-│   └── status_service.py  # Service to query the status of builds/unbuilds.
-├── main.py                # FastAPI application with endpoints for build, unbuild, and status.
-├── unit_tests/            # Unit tests for services (e.g., test_build_service.py
-│   ├── test_base_service.py
-│   ├── test_build_service.py    
-│   ├── test_unbuild_service.py
-│   └── test_status_service.py 
-├── tasks/                 # YAML task definitions (e.g., test-infra.yml).
-├── resources/             # Contains scripts and templates used by the build/unbuild processes.
-├── environments/          # Contains YAML files with environment configurations.
-├── Dockerfile             # Dockerfile for containerized deployment.
-├── requirements.txt       # Python dependencies.
-└── README.md              # Project overview and instructions.
-
-```
+`py_builder` is a FastAPI service that orchestrates AWS infrastructure build and unbuild workflows from YAML task files. It uses Jinja2 templates, shell scripts, and optional database-backed status tracking.
 
 ## Features
 
-- **YAML Task Definitions:**  
-  Define tasks for AWS infrastructure (e.g., CloudFormation, EC2, S3) in YAML files (e.g., `tasks/test-infra.yml`).
-  The repo doesn't include any task YAML configurations, but you can have your own in your repo, and copy env files to tasks folder.
+- YAML-driven orchestration (`tasks/<component>.yml`)
+- Build and unbuild APIs
+- Environment aggregation from global and component YAML files
+- Jinja2 rendering for scripts/templates
+- Step/application status tracking in SQLite via SQLAlchemy
+- Unit tests with `unittest`
 
-- **Jinja2 Templating:**  
-  Dynamically render build and destroy scripts using environment-specific YAML configurations stored in the `environments/` folder.
-  The repo doesn't include any environment-specific YAML configurations, but you can have your own in your repo, and copy env files to environments folder.
+## Project Structure
 
-- **Resource Scripts:**  
-  Store resource-specific scripts and templates in the `resources/` folder, which are used during the build and unbuild processes.
-  The repo doesn't include any AWS CloudFormation templates, but you can have your own in your repo, and copy template files to resource folder.
-- 
-- **Build & Unbuild Locking:**  
-  Prevent concurrent builds or unbuilds on the same component by enforcing a build locker via the database.
+```text
+py_builder/
+├── main.py
+├── database.py
+├── models.py
+├── schemas.py
+├── auth.py
+├── routes/
+│   ├── build.py
+│   ├── unbuild.py
+│   ├── status.py
+│   ├── environment.py
+│   └── resources.py
+├── services/
+│   ├── base_service.py
+│   ├── build_service.py
+│   ├── unbuild_service.py
+│   ├── status_service.py
+│   └── environment_service.py
+├── tasks/
+│   ├── test_cfn.yml
+│   ├── test_cfn_template.yml
+│   └── test_custom.yml
+├── environments/
+├── resources/
+├── templates/
+├── unit_tests/
+├── requirements.txt
+├── Dockerfile
+└── README.md
+```
 
-- **Step Logging:**  
-  Log detailed step statuses (including output and timestamps) in the database for tracking and troubleshooting.
+## Prerequisites
 
-- **FastAPI Endpoints:**  
-  Expose RESTful endpoints to trigger build, unbuild, and status checks.
-
-- **Docker Support:**  
-  A Dockerfile is provided for containerized deployment. Mount your local AWS credentials (e.g., the `.aws` folder) into the container for AWS CLI/SSO integration.
+- Python 3.10+
+- `pip`
+- AWS CLI credentials/profile configured if running real AWS actions
 
 ## Installation
 
-1. **Clone the Repository:**
+```bash
+git clone https://github.com/fjin/py_builder.git
+cd py_builder
 
-   ```bash
-   git clone https://github.com/fjin/py_builder.git
-   cd py_builder
-   git checkout develop
-   ```
+python3 -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
 
-2. **Install Dependencies:**
-
-   It's recommended to use a virtual environment:
-
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
-
-3. **Database Setup:**
-
-   Configure your database as needed. For local development, SQLite is a good option.
-   
-   You don't have to use database, we can bypass it by setting flag "db_flag": "False" in curl commands.
-   
-## Usage
-
-### Running the API
-
-Start the FastAPI application using Uvicorn:
+## Run the API
 
 ```bash
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### API Endpoints
+The OpenAPI docs are available at `http://127.0.0.1:8000/docs`.
 
-- **Build:**  
-  `POST /build/`  
-  Request Body:
-  ```json
-  {
-      "component": "test_cfn_template",
-      "env_path": "~/work/py_builder/",
-      "resource_path": "~/work/py_builder/",
-      "task_path": "~/work/py_builder/"
-  }
-  ```
-  Triggers the build process based on the tasks defined in `tasks/test-infra.yml`.
-  By default, db_flag is set "True" if you do not specify it in the curl command.  
+## API Endpoints
 
-- **Unbuild:**  
-  `POST /unbuild/`  
-  Request Body:
-  ```json
-  {
-    "component": "test_cfn_template",
-    "task_path": "~/work/py_builder/",
-    "db_flag": false
-  }
-  ```
-  Triggers the unbuild (destroy) process for the specified component. (Note: If unbuild is successful, `/status` may return "No record found" since the record is deleted.)
-  By default, db_flag is set "True" if you do not specify it in the curl command.
+### `POST /build/`
 
-- **Status:**  
-  `GET /status/?application_name=test-infra`  
-  Returns the current steps and overall status from the active build/unbuild, or the most recent record if no build is in progress.
+Starts a build for a component. `component` maps to `tasks/<component>.yml`.
 
-### Use curl commands to test the endpoints
-- **Build Example:**
+Request body:
 
-  ```bash
-    curl -X POST "http://127.0.0.1:8000/build/" \
-        -H "Content-Type: application/json" \
-        -d '{
-        "component": "test_cfn_template",
-        "env_path": "~/work/py_builder/",
-        "resource_path": "~/work/py_builder/",
-        "task_path": "~/work/py_builder/"
-        }'
-  ```
-  
-  - **Unbuild Example:**
+```json
+{
+  "component": "test_cfn_template",
+  "env_path": "/Users/you/work/py_builder",
+  "resource_path": "/Users/you/work/py_builder",
+  "task_path": "/Users/you/work/py_builder",
+  "db_flag": false
+}
+```
 
-    ```bash
-      curl -X POST "http://127.0.0.1:8000/unbuild/" \
-          -H "Content-Type: application/json" \
-          -d '{
-          "component": "test_cfn_template",
-          "task_path": "~/work/py_builder/",
-          "db_flag": false
-          }'
-    ```
-    
-## AWS CLI and Credentials
+Notes:
 
-If you use AWS CLI or AWS SSO locally, mount your local `.aws` directory into the container:
+- `env_path`, `resource_path`, and `task_path` are base paths; service appends `environments/`, `resources/`, and `tasks/`.
+- `db_flag` is present in the build schema but currently not used by `BuildService`.
+
+### `POST /unbuild/`
+
+Starts an unbuild for a component.
+
+Request body:
+
+```json
+{
+  "component": "test_cfn_template",
+  "task_path": "/Users/you/work/py_builder",
+  "db_flag": false
+}
+```
+
+Notes:
+
+- `db_flag` default is `false`.
+- If `db_flag` is `true`, unbuild requires an existing application/build record.
+- On successful unbuild, the application record is deleted, so a later status lookup may return not found.
+
+### `GET /status/`
+
+Returns current/latest status for a component:
+
+```text
+GET /status/?application_name=test_cfn_template
+```
+
+### `GET /environment/`
+
+Loads and merges environment data for the component task file:
+
+```text
+GET /environment/?component=test_cfn_template&env_path=/Users/you/work/py_builder&resource_path=/Users/you/work/py_builder&task_path=/Users/you/work/py_builder
+```
+
+### `GET /resources/` and `POST /resources/`
+
+Basic resource CRUD over the `Resource` table.
+
+## Curl Examples
+
+Build:
 
 ```bash
-docker run -d -p 8000:8000 -v ~/.aws:/root/.aws py_builder_image
+curl -X POST "http://127.0.0.1:8000/build/" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "component": "test_cfn_template",
+    "env_path": "/Users/you/work/py_builder",
+    "resource_path": "/Users/you/work/py_builder",
+    "task_path": "/Users/you/work/py_builder",
+    "db_flag": false
+  }'
 ```
 
-## Writing Task Definitions
-Task definitions are written in YAML and stored in the `tasks/` folder. Each task can include multiple steps, such as running AWS CLI commands, executing scripts, or applying CloudFormation templates.
-Here is an example of a simple task definition (`tasks/test-infra.yml`):
+Unbuild:
 
-```yaml
----
-# tasks to create an AWS Stack contains S3 and EC2
-- name: "s3-test"
-  resource: "s3-test"
-  group: "test"
-  type: "infrastructure"
-  account: "unison-np"
-  environment: "np"
-  configuration: "s3-test"
-  steps:
-    - name: "deploy cfn"
-      type: "cloudformation"
-      action_script: "deploy_cfn.sh"
-      action_template: "cfn.yml"
-
-- name: "ec2-test"
-  resource: "ec2-test"
-  group: "test"
-  type: "infrastructure"
-  account: "unison-np"
-  environment: "np"
-  configuration: "ec2-test"
-  steps:
-    - name: "deploy cfn"
-      type: "cloudformation"
-      action_script: "deploy_cfn.sh"
-      action_template: "cfn.yml"
-    - name: "show instance ip"
-      type: "shell"
-      action_script: "showip.sh"
-
-
+```bash
+curl -X POST "http://127.0.0.1:8000/unbuild/" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "component": "test_cfn_template",
+    "task_path": "/Users/you/work/py_builder",
+    "db_flag": false
+  }'
 ```
 
-## Writing Environment Configurations
-Environment-specific configurations are stored in the `environments/` folder as YAML files. These configurations can include parameters such as AWS region, instance types, and other settings that can be referenced in task definitions.
-Here is an example of an environment configuration (`environments/np.yml`): 
-```yaml
-aws_region: "ap-southeast-2"
+Status:
 
-hosted_zone_id: "Z000000000000000001"
-hosted_zone_name: "xxx.aws.123.com.au"
-
-tooling_vpc_id: "vpc-0000000000123456"
-tooling_subnet_1: "subnet-0000000000123456"
-tooling_subnet_2: "subnet-0000000000223456"
-tooling_subnet_3: "subnet-0000000000323456"
-tooling_vpc_cidr: "10.99.99.99/24"
+```bash
+curl "http://127.0.0.1:8000/status/?application_name=test_cfn_template"
 ```
 
-Project specific environment configurations can be created as needed. In folder named as component name, e.g. `environments/ec2-test/np.yml`.
+## Tasks, Environments, and Resources
 
+- Tasks are loaded from `tasks/<component>.yml`.
+- `load_config()` expects both files below for each task entry:
+  - Global: `environments/<environment>.yml`
+  - Component-specific: `environments/<resource>/<environment>.yml`
+- Resource scripts/configs are loaded from `resources/<resource>/`.
+- Shared templates are under `templates/`.
 
-## Docker
+## Database
 
-A Dockerfile is provided for containerized deployment.
+The default database is SQLite at `test.db`:
 
-1. **Build the Docker image:**
+```python
+DATABASE_URL = "sqlite:///./test.db"
+```
 
-   ```bash
-   docker build -t py_builder_image .
-   ```
-
-2. **Run the Container:**
-
-   ```bash
-   docker run -d -p 8000:8000 -v ~/.aws:/root/.aws py_builder_image
-   ```
+Tables are created at app startup (`Base.metadata.create_all(bind=engine)`).
 
 ## Testing
 
-Tests are written using Python’s built-in `unittest` framework and are located in the `services/` folder (e.g., `test_build_service.py`, `test_unbuild_service.py`, `test_status_service.py`).
-
-To run all tests from the project root:
+Run all unit tests:
 
 ```bash
-python -m unittest discover -s unit_tests
+python3 -m unittest discover -s unit_tests
 ```
 
-### Checking Test Coverage
+Coverage (optional):
 
-1. **Install Coverage:**
+```bash
+pip install coverage
+coverage run -m unittest discover -s unit_tests
+coverage report
+coverage html
+```
 
-   ```bash
-   pip install coverage
-   ```
+## Docker
 
-2. **Run Tests with Coverage:**
+Build and run:
 
-   ```bash
-   coverage run -m unittest discover -s unit_tests
-   ```
-
-3. **Generate a Report:**
-
-   ```bash
-   coverage report
-   coverage html
-   ```
-   Then open `htmlcov/index.html` in your browser to review the coverage details.
+```bash
+docker build -t py_builder_image .
+docker run -d -p 8000:8000 -v ~/.aws:/root/.aws py_builder_image
+```
 
 ## Contributing
 
-Contributions are welcome! Fork the repository and submit pull requests with your improvements.
+Open an issue or submit a pull request.
 
 ## License
 
-This project is licensed under the MIT License.
-
-## Contact
-
-For questions or support, please open an issue on GitHub.
-```
-
----
-
-This version should render properly in GitHub. Adjust any sections as needed to best match your project's specifics.
-
-
-## TODO list
-
-### status check fails
-### render_template throws error
-### unbuild should follow a specific order
+MIT
